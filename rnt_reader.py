@@ -1,8 +1,6 @@
 import pdfplumber
 import re
 import unicodedata
-import pytesseract
-from pdf2image import convert_from_path
 from collections import defaultdict
 
 
@@ -29,46 +27,34 @@ def _extraer_importe_en_linea_o_siguiente(lineas, i, max_offset=3):
     return None
 
 
-def _extraer_texto_con_ocr(pdf_path, page_number):
-
-    images = convert_from_path(
-        pdf_path,
-        first_page=page_number + 1,
-        last_page=page_number + 1
-    )
-
-    texto = pytesseract.image_to_string(images[0], lang="spa")
-    return texto
-
-
 def extraer_bases_rnt(pdf_path, debug_dni=None):
 
-    # 🔹 Estructura mensual (ahora con Solidaridad)
+    # 🔹 Estructura mensual
     detalle = defaultdict(lambda: {
         "Base_CC": 0.0,
         "Base_AT": 0.0,
         "Base_Solidaridad": 0.0
     })
 
-    trabajador_actual = None   # IPF (como antes)
-    dni_actual = None          # NUEVO: DNI derivado
+    trabajador_actual = None
+    dni_actual = None
     mes_actual = None
     año_actual = None
+
+    paginas_con_error = []
 
     with pdfplumber.open(pdf_path) as pdf:
         for num_pagina, pagina in enumerate(pdf.pages):
 
+            bases_en_pagina = 0  # 🔎 contador nuevo
+
             texto = pagina.extract_text()
 
-            # OCR si es página escaneada
-            if not texto or "(cid:" in texto or texto.count("") > 3:
-                print(f"⚠️ Usando OCR en página {num_pagina + 1}")
-                texto = _extraer_texto_con_ocr(pdf_path, num_pagina)
-
             if not texto:
+                paginas_con_error.append(num_pagina + 1)
                 continue
 
-            # 🔎 Detectar periodo (ej: 10/2024-10/2024)
+            # 🔎 Detectar periodo
             match_periodo = re.search(r"Periodo de liquidación\s+(\d{2})/(\d{4})", texto)
             if match_periodo:
                 mes_actual = match_periodo.group(1)
@@ -82,11 +68,11 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 linea = unicodedata.normalize("NFKD", linea)
                 linea = linea.encode("ascii", "ignore").decode()
 
-                # Detectar trabajador (NAF + IPF)
+                # Detectar trabajador
                 match_trabajador = re.match(r"(\d{11,12})\s+(\d{9,10}[A-Z])", linea)
                 if match_trabajador:
-                    trabajador_actual = match_trabajador.group(2)   # IPF
-                    dni_actual = trabajador_actual[-9:]             # ✅ NUEVO: DNI = últimos 9 (8 dígitos + letra)
+                    trabajador_actual = match_trabajador.group(2)
+                    dni_actual = trabajador_actual[-9:]
 
                 if not trabajador_actual or not mes_actual:
                     continue
@@ -97,7 +83,6 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                     dni_actual = None
                     continue
 
-                # ✅ mantenemos la estructura, pero clave por IPF (más seguro)
                 clave = (trabajador_actual, año_actual, mes_actual)
 
                 # =========================
@@ -105,9 +90,9 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 # =========================
                 if "BASE DE CONTINGENCIAS COMUNES" in linea:
                     valor = _extraer_importe_en_linea_o_siguiente(lineas, i)
-
                     if valor is not None:
                         detalle[clave]["Base_CC"] += valor
+                        bases_en_pagina += 1
                         if debug_dni == dni_actual:
                             print("CC capturada:", valor)
 
@@ -116,9 +101,9 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 # =========================
                 if "BASE DE ACCIDENTES DE TRABAJO" in linea:
                     valor = _extraer_importe_en_linea_o_siguiente(lineas, i)
-
                     if valor is not None:
                         detalle[clave]["Base_AT"] += valor
+                        bases_en_pagina += 1
                         if debug_dni == dni_actual:
                             print("AT capturada:", valor)
 
@@ -127,11 +112,15 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 # =========================
                 if "COTIZACION ADIC" in linea or "SOLIDARIDAD" in linea:
                     valor = _extraer_importe_en_linea_o_siguiente(lineas, i)
-
                     if valor is not None:
                         detalle[clave]["Base_Solidaridad"] += valor
+                        bases_en_pagina += 1
                         if debug_dni == dni_actual:
                             print("Solidaridad capturada:", valor)
+
+            # 🔎 Si hay periodo pero no hemos capturado bases → marcar página problemática
+            if match_periodo and bases_en_pagina == 0:
+                paginas_con_error.append(num_pagina + 1)
 
     # =========================
     # GENERAR DETALLE MENSUAL
@@ -140,8 +129,8 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
     detalle_mensual = []
     for (ipf, año, mes), valores in detalle.items():
         detalle_mensual.append({
-            "IPF": ipf,                         # NUEVO (trazabilidad)
-            "DNI": ipf[-9:],                    # ✅ NUEVO (derivado)
+            "IPF": ipf,
+            "DNI": ipf[-9:],
             "Año": int(año),
             "Mes": int(mes),
             "Base_CC": round(valores["Base_CC"], 2),
@@ -160,7 +149,6 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
     })
 
     for item in detalle_mensual:
-        # ✅ resumimos por DNI (como antes) y año
         clave = (item["DNI"], item["Año"])
         resumen[clave]["Base_CC"] += item["Base_CC"]
         resumen[clave]["Base_AT"] += item["Base_AT"]
@@ -176,4 +164,4 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
             "Base_Solidaridad_Anual": round(valores["Base_Solidaridad"], 2)
         })
 
-    return detalle_mensual, resumen_anual
+    return detalle_mensual, resumen_anual, paginas_con_error

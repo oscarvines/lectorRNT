@@ -17,7 +17,7 @@ if uploaded_file:
         with open("temp_rnt.pdf", "wb") as f:
             f.write(uploaded_file.read())
 
-        detalle_mensual, resumen_anual = extraer_bases_rnt("temp_rnt.pdf")
+        detalle_mensual, resumen_anual, paginas_con_error = extraer_bases_rnt("temp_rnt.pdf")
 
         if not resumen_anual:
             st.warning("No se han encontrado registros.")
@@ -25,6 +25,24 @@ if uploaded_file:
 
             df_resumen = pd.DataFrame(resumen_anual)
             df_detalle = pd.DataFrame(detalle_mensual)
+
+            # 🔎 Mostrar páginas con problemas de lectura
+            if paginas_con_error:
+                st.error(
+                    f"⚠️ No se pudieron leer correctamente las páginas: {paginas_con_error}"
+                )
+
+            # 🔎 NUEVO: Detectar meses faltantes
+            if not df_detalle.empty:
+                meses_detectados = sorted(df_detalle["Mes"].unique())
+                meses_esperados = list(range(1, 13))
+                meses_faltantes = [m for m in meses_esperados if m not in meses_detectados]
+
+                if meses_faltantes:
+                    st.error(
+                        f"⚠️ Faltan meses en el PDF: {meses_faltantes}. "
+                        f"Puede haber páginas no legibles o mal formateadas."
+                    )
 
             st.success(f"Se han detectado {len(df_resumen)} trabajadores")
 
@@ -76,7 +94,7 @@ if uploaded_file:
             st.markdown("---")
 
             # =========================================================
-            # 🔎 NUEVO: FILTRO POR DNI (NO rompe nada anterior)
+            # 🔎 FILTRO POR DNI
             # =========================================================
 
             st.subheader("🎯 Filtrar por DNI")
