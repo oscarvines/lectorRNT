@@ -14,11 +14,9 @@ if uploaded_file:
 
     with st.spinner("Procesando RNT..."):
 
-        # Guardamos temporalmente el archivo
         with open("temp_rnt.pdf", "wb") as f:
             f.write(uploaded_file.read())
 
-        # 🔹 NUEVA ESTRUCTURA
         detalle_mensual, resumen_anual = extraer_bases_rnt("temp_rnt.pdf")
 
         if not resumen_anual:
@@ -34,7 +32,7 @@ if uploaded_file:
             # MÉTRICAS GENERALES
             # =========================
 
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
 
             with col1:
                 st.metric(
@@ -48,10 +46,16 @@ if uploaded_file:
                     f"{df_resumen['Base_AT_Anual'].sum():,.2f} €"
                 )
 
+            with col3:
+                st.metric(
+                    "Solidaridad Total Anual",
+                    f"{df_resumen['Base_Solidaridad_Anual'].sum():,.2f} €"
+                )
+
             st.markdown("---")
 
             # =========================
-            # RESUMEN ANUAL
+            # RESUMEN ANUAL COMPLETO
             # =========================
 
             st.subheader("📊 Resumen Anual por Trabajador")
@@ -60,7 +64,7 @@ if uploaded_file:
             st.markdown("---")
 
             # =========================
-            # DETALLE MENSUAL
+            # DETALLE MENSUAL COMPLETO
             # =========================
 
             st.subheader("📅 Detalle Mensual")
@@ -69,22 +73,66 @@ if uploaded_file:
                 width="stretch"
             )
 
+            st.markdown("---")
+
+            # =========================================================
+            # 🔎 NUEVO: FILTRO POR DNI (NO rompe nada anterior)
+            # =========================================================
+
+            st.subheader("🎯 Filtrar por DNI")
+
+            lista_dnis = sorted(df_resumen["DNI"].unique())
+
+            dnis_seleccionados = st.multiselect(
+                "Selecciona uno o varios DNIs:",
+                options=lista_dnis
+            )
+
+            if dnis_seleccionados:
+                df_resumen_filtrado = df_resumen[df_resumen["DNI"].isin(dnis_seleccionados)]
+                df_detalle_filtrado = df_detalle[df_detalle["DNI"].isin(dnis_seleccionados)]
+            else:
+                df_resumen_filtrado = df_resumen
+                df_detalle_filtrado = df_detalle
+
+            st.markdown("### 📌 Resumen Anual Filtrado")
+            st.dataframe(df_resumen_filtrado, width="stretch")
+
+            st.markdown("### 📌 Detalle Mensual Filtrado")
+            st.dataframe(
+                df_detalle_filtrado.sort_values(["DNI", "Año", "Mes"]),
+                width="stretch"
+            )
+
             # =========================
-            # EXPORTAR A EXCEL
+            # EXPORTAR EXCEL COMPLETO
             # =========================
 
-            def convertir_excel(df_resumen, df_detalle):
+            def convertir_excel(df_res, df_det):
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                    df_resumen.to_excel(writer, index=False, sheet_name="Resumen_Anual")
-                    df_detalle.to_excel(writer, index=False, sheet_name="Detalle_Mensual")
+                    df_res.to_excel(writer, index=False, sheet_name="Resumen_Anual")
+                    df_det.to_excel(writer, index=False, sheet_name="Detalle_Mensual")
                 return output.getvalue()
 
-            excel_data = convertir_excel(df_resumen, df_detalle)
+            excel_completo = convertir_excel(df_resumen, df_detalle)
 
             st.download_button(
                 label="📥 Descargar Excel Completo",
-                data=excel_data,
+                data=excel_completo,
                 file_name="resultado_rnt_completo.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            # =========================
+            # EXPORTAR EXCEL FILTRADO
+            # =========================
+
+            excel_filtrado = convertir_excel(df_resumen_filtrado, df_detalle_filtrado)
+
+            st.download_button(
+                label="📥 Descargar Excel Filtrado",
+                data=excel_filtrado,
+                file_name="resultado_rnt_filtrado.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
