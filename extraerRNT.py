@@ -1,20 +1,21 @@
 import pdfplumber
 
-def guardar_texto_pdf_en_txt(pdf_path, output_txt_path):
+def dump_pdfplumber(pdf_path, output_txt):
+
+    texto_total = ""
+
     with pdfplumber.open(pdf_path) as pdf:
-        texto = ""
-        for i, page in enumerate(pdf.pages, start=1):
-            texto += f"\n\n===== PÁGINA {i} =====\n\n"
-            texto += (page.extract_text() or "") + "\n"
+        for i, pagina in enumerate(pdf.pages, start=1):
+            texto = pagina.extract_text()
+            texto_total += f"\n\n===== PÁGINA {i} =====\n\n"
+            if texto:
+                texto_total += texto
 
-    with open(output_txt_path, "w", encoding="utf-8") as f:
-        f.write(texto)
+    with open(output_txt, "w", encoding="utf-8") as f:
+        f.write(texto_total)
 
-    print("TXT generado correctamente en:", output_txt_path)
+    print("TXT generado:", output_txt)
 
 
 if __name__ == "__main__":
-    pdf_path = "RNT2024.pdf"
-    output_txt_path = "rnt_extraido.txt"
-
-    guardar_texto_pdf_en_txt(pdf_path, output_txt_path)
+    dump_pdfplumber("RNT2024.pdf", "RNT2024_plumber.txt")
