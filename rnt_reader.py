@@ -43,10 +43,15 @@ def _extraer_texto_con_ocr(pdf_path, page_number):
 
 def extraer_bases_rnt(pdf_path, debug_dni=None):
 
-    # 🔹 Estructura mensual
-    detalle = defaultdict(lambda: {"Base_CC": 0.0, "Base_AT": 0.0})
+    # 🔹 Estructura mensual (ahora con Solidaridad)
+    detalle = defaultdict(lambda: {
+        "Base_CC": 0.0,
+        "Base_AT": 0.0,
+        "Base_Solidaridad": 0.0
+    })
 
-    trabajador_actual = None
+    trabajador_actual = None   # IPF (como antes)
+    dni_actual = None          # NUEVO: DNI derivado
     mes_actual = None
     año_actual = None
 
@@ -77,10 +82,11 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 linea = unicodedata.normalize("NFKD", linea)
                 linea = linea.encode("ascii", "ignore").decode()
 
-                # Detectar trabajador
+                # Detectar trabajador (NAF + IPF)
                 match_trabajador = re.match(r"(\d{11,12})\s+(\d{9,10}[A-Z])", linea)
                 if match_trabajador:
-                    trabajador_actual = match_trabajador.group(2)
+                    trabajador_actual = match_trabajador.group(2)   # IPF
+                    dni_actual = trabajador_actual[-9:]             # ✅ NUEVO: DNI = últimos 9 (8 dígitos + letra)
 
                 if not trabajador_actual or not mes_actual:
                     continue
@@ -88,8 +94,10 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
                 # Ignorar totales
                 if "SUMA DE BASES" in linea:
                     trabajador_actual = None
+                    dni_actual = None
                     continue
 
+                # ✅ mantenemos la estructura, pero clave por IPF (más seguro)
                 clave = (trabajador_actual, año_actual, mes_actual)
 
                 # =========================
@@ -100,7 +108,7 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
 
                     if valor is not None:
                         detalle[clave]["Base_CC"] += valor
-                        if debug_dni == trabajador_actual:
+                        if debug_dni == dni_actual:
                             print("CC capturada:", valor)
 
                 # =========================
@@ -111,33 +119,52 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
 
                     if valor is not None:
                         detalle[clave]["Base_AT"] += valor
-                        if debug_dni == trabajador_actual:
+                        if debug_dni == dni_actual:
                             print("AT capturada:", valor)
+
+                # =========================
+                # SOLIDARIDAD
+                # =========================
+                if "COTIZACION ADIC" in linea or "SOLIDARIDAD" in linea:
+                    valor = _extraer_importe_en_linea_o_siguiente(lineas, i)
+
+                    if valor is not None:
+                        detalle[clave]["Base_Solidaridad"] += valor
+                        if debug_dni == dni_actual:
+                            print("Solidaridad capturada:", valor)
 
     # =========================
     # GENERAR DETALLE MENSUAL
     # =========================
 
     detalle_mensual = []
-    for (dni, año, mes), valores in detalle.items():
+    for (ipf, año, mes), valores in detalle.items():
         detalle_mensual.append({
-            "DNI": dni,
+            "IPF": ipf,                         # NUEVO (trazabilidad)
+            "DNI": ipf[-9:],                    # ✅ NUEVO (derivado)
             "Año": int(año),
             "Mes": int(mes),
             "Base_CC": round(valores["Base_CC"], 2),
-            "Base_AT": round(valores["Base_AT"], 2)
+            "Base_AT": round(valores["Base_AT"], 2),
+            "Base_Solidaridad": round(valores["Base_Solidaridad"], 2)
         })
 
     # =========================
     # GENERAR RESUMEN ANUAL
     # =========================
 
-    resumen = defaultdict(lambda: {"Base_CC": 0.0, "Base_AT": 0.0})
+    resumen = defaultdict(lambda: {
+        "Base_CC": 0.0,
+        "Base_AT": 0.0,
+        "Base_Solidaridad": 0.0
+    })
 
     for item in detalle_mensual:
+        # ✅ resumimos por DNI (como antes) y año
         clave = (item["DNI"], item["Año"])
         resumen[clave]["Base_CC"] += item["Base_CC"]
         resumen[clave]["Base_AT"] += item["Base_AT"]
+        resumen[clave]["Base_Solidaridad"] += item["Base_Solidaridad"]
 
     resumen_anual = []
     for (dni, año), valores in resumen.items():
@@ -145,7 +172,8 @@ def extraer_bases_rnt(pdf_path, debug_dni=None):
             "DNI": dni,
             "Año": año,
             "Base_CC_Anual": round(valores["Base_CC"], 2),
-            "Base_AT_Anual": round(valores["Base_AT"], 2)
+            "Base_AT_Anual": round(valores["Base_AT"], 2),
+            "Base_Solidaridad_Anual": round(valores["Base_Solidaridad"], 2)
         })
 
     return detalle_mensual, resumen_anual
